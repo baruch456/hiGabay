@@ -1,15 +1,16 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, Literal
-from datetime import date, datetime
+from datetime import date, datetime, time
 from uuid import uuid4
 import os
+import pytz
 from googleapiclient.discovery import build
 
 # Import your graph and related components
 from src.graph import graph  # Adjust import path as needed
 from src.tool import create_event_tool
-from src.utilities import credentials
+from src.utilities import CALENDAR_ID, api_resource, credentials
 
 app = FastAPI()
 
@@ -261,6 +262,48 @@ async def invoke_graph(data: UserInput):
         return {"status": "success", "result": result}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@app.get("/calendar/events")
+async def list_calendar_events(start_date: date, end_date: date):
+    if end_date <= start_date:
+        raise HTTPException(status_code=400, detail="end_date must be after start_date")
+
+    calendar_timezone = pytz.timezone("Asia/Jerusalem")
+    time_min = calendar_timezone.localize(datetime.combine(start_date, time.min))
+    time_max = calendar_timezone.localize(datetime.combine(end_date, time.min))
+    events = []
+    page_token = None
+    while True:
+        result = (
+            api_resource.events()
+            .list(
+                calendarId=CALENDAR_ID,
+                timeMin=time_min.isoformat(),
+                timeMax=time_max.isoformat(),
+                maxResults=2500,
+                singleEvents=True,
+                orderBy="startTime",
+                pageToken=page_token,
+            )
+            .execute()
+        )
+        events.extend(result.get("items", []))
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+
+    return {
+        "status": "success",
+        "events": [
+            {
+                "summary": event.get("summary", "Busy"),
+                "start": event.get("start", {}),
+                "end": event.get("end", {}),
+            }
+            for event in events
+        ],
+    }
 
 
 @app.post("/bookings/submit")

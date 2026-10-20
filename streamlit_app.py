@@ -3,7 +3,9 @@ import requests
 import json
 import csv
 import io
+import calendar as month_calendar
 from datetime import date, datetime, timedelta
+import pytz
 
 # uvicorn app:app --host 0.0.0.0 --port 8001
 # streamlit run streamlit_app.py
@@ -13,6 +15,7 @@ st.set_page_config(page_title="Calendar AI Assistant", page_icon="📅")
 st.title("📅 AI Calendar Booking Assistant")
 
 API_URL = "http://localhost:8001/invoke"
+CALENDAR_EVENTS_API_URL = "http://localhost:8001/calendar/events"
 BOOKING_API_URL = "http://localhost:8001/bookings/submit"
 BOOKING_LIST_API_URL = "http://localhost:8001/bookings/list"
 BOOKING_MARK_PAID_API_URL = "http://localhost:8001/bookings/mark-paid"
@@ -145,11 +148,46 @@ def _rows_to_csv(rows: list[dict]) -> str:
     return output.getvalue()
 
 
+def _event_day(event: dict) -> date | None:
+    start = event.get("start", {})
+    if start.get("date"):
+        return date.fromisoformat(start["date"])
+    if not start.get("dateTime"):
+        return None
+    start_datetime = datetime.fromisoformat(start["dateTime"].replace("Z", "+00:00"))
+    if not start_datetime.tzinfo:
+        start_datetime = pytz.timezone("Asia/Jerusalem").localize(start_datetime)
+    if start_datetime.tzinfo:
+        start_datetime = start_datetime.astimezone(pytz.timezone("Asia/Jerusalem"))
+    return start_datetime.date()
+
+
+def _event_time(event: dict) -> str:
+    start_datetime = event.get("start", {}).get("dateTime")
+    if not start_datetime:
+        return "All day"
+    parsed = datetime.fromisoformat(start_datetime.replace("Z", "+00:00"))
+    if not parsed.tzinfo:
+        parsed = pytz.timezone("Asia/Jerusalem").localize(parsed)
+    if parsed.tzinfo:
+        parsed = parsed.astimezone(pytz.timezone("Asia/Jerusalem"))
+    return parsed.strftime("%H:%M")
+
+
+def _shift_month(month: date, offset: int) -> date:
+    month_index = month.year * 12 + month.month - 1 + offset
+    return date(month_index // 12, month_index % 12 + 1, 1)
+
+
 # Initialize chat history
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+if "calendar_month" not in st.session_state:
+    st.session_state.calendar_month = date.today().replace(day=1)
 
-tab_chat, tab_booking, tab_gabay = st.tabs(["Assistant Chat", "Book a Day (Form)", "Gabay Control"])
+tab_chat, tab_calendar, tab_booking, tab_gabay = st.tabs(
+    ["Assistant Chat", "Calendar", "Book a Day (Form)", "Gabay Control"]
+)
 
 with tab_chat:
     with st.form("user_input_form", clear_on_submit=True):
@@ -233,6 +271,70 @@ with tab_chat:
         content = message["content"]
         with st.chat_message("🧑‍💻 User" if role == "user" else "🤖 Assistant"):
             st.markdown(content)
+
+with tab_calendar:
+    selected_month = st.session_state.calendar_month
+    previous_col, title_col, next_col = st.columns([1, 3, 1])
+    with previous_col:
+        if st.button("← Previous", key="calendar_previous"):
+            st.session_state.calendar_month = _shift_month(selected_month, -1)
+            st.rerun()
+    with title_col:
+        st.subheader(selected_month.strftime("%B %Y"))
+    with next_col:
+        if st.button("Next →", key="calendar_next"):
+            st.session_state.calendar_month = _shift_month(selected_month, 1)
+            st.rerun()
+
+    month_start = selected_month.replace(day=1)
+    next_month = _shift_month(month_start, 1)
+    try:
+        calendar_response = requests.get(
+            CALENDAR_EVENTS_API_URL,
+            params={
+                "start_date": month_start.isoformat(),
+                "end_date": next_month.isoformat(),
+            },
+            timeout=30,
+        )
+        calendar_response.raise_for_status()
+        calendar_result = calendar_response.json()
+        if calendar_result.get("status") != "success":
+            st.error(calendar_result.get("message", "Could not load calendar events."))
+        else:
+            events_by_day: dict[date, list[dict]] = {}
+            for event in calendar_result.get("events", []):
+                event_day = _event_day(event)
+                if event_day:
+                    events_by_day.setdefault(event_day, []).append(event)
+
+            weekday_columns = st.columns(7)
+            for column, weekday in zip(
+                weekday_columns,
+                ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+            ):
+                column.markdown(f"**{weekday}**")
+
+            for week in month_calendar.Calendar(firstweekday=6).monthdayscalendar(
+                selected_month.year, selected_month.month
+            ):
+                day_columns = st.columns(7)
+                for column, day_number in zip(day_columns, week):
+                    with column.container(border=True):
+                        if day_number == 0:
+                            st.write(" ")
+                            continue
+                        current_day = date(
+                            selected_month.year, selected_month.month, day_number
+                        )
+                        st.markdown(f"**{day_number}**")
+                        for event in events_by_day.get(current_day, []):
+                            title = str(event.get("summary") or "Busy")
+                            st.caption(f"{_event_time(event)} · {title}")
+    except requests.exceptions.RequestException as error:
+        st.error(f"Could not load calendar events: {error}")
+    except (ValueError, TypeError, KeyError) as error:
+        st.error(f"Calendar response contained invalid event data: {error}")
 
 with tab_booking:
     st.markdown(

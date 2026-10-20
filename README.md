@@ -16,6 +16,7 @@ A conversational AI assistant powered by LangChain, FastAPI, and Groq, designed 
 -   **Delete Events**: "Cancel the project sync."
 -   **Smart Tool Selection**: Uses LangChain's LangGraph to intelligently decide which calendar tool to use based on your request.
 -   **Web Interface**: Easy-to-use chat UI built with Streamlit.
+-   **Read-only Calendar View**: Browse calendar events by month without editing them.
 -   **Containerized**: Fully containerized with Docker for easy deployment.
 
 ## 🏛️ Architecture
@@ -174,6 +175,7 @@ The FastAPI backend exposes the following endpoints:
 | Method | Endpoint  | Description                               |
 | :----- | :-------- | :---------------------------------------- |
 | `POST` | `/invoke` | Processes user input via the LangGraph agent. |
+| `GET`  | `/calendar/events` | Read-only events for a date range (`start_date` and `end_date`, ISO format). |
 | `GET`  | `/health` | Health check to confirm the API is running. |
 
 ## 💡 Usage Examples
