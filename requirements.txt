@@ -1,0 +1,15 @@
+langchain 
+langchain-google-community[calendar] 
+google-api-python-client 
+google-auth
+google-auth-oauthlib
+python-dotenv
+langchain-groq
+langgraph
+fastapi
+uvicorn
+streamlit
+requests
+pydantic
+pytz
+python-dateutil
